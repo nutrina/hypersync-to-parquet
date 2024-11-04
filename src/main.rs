@@ -124,22 +124,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         tx_block_numbers.push(tx_block.clone());
                         log_data.push(log.data.map_or_else(String::new, |d| d.encode_hex()));
                     }
-
-                    // Clear vectors after saving
-                    block_numbers.clear();
-                    tx_hashes.clear();
-                    contract_addresses.clear();
-                    from_addresses.clear();
-                    to_addresses.clear();
-                    amounts_str.clear();
-                    gas_used.clear();
-                    tx_block_numbers.clear();
-                    log_data.clear();
                 }
             }
         }
 
-        println!("Processed block: {}", res.next_block);
+        println!(
+            "Processed block: {}, Saving to Parquet? {}",
+            res.next_block,
+            &block_numbers.len()
+        );
 
         // Save to parquet file every 5000 blocks
         if block_numbers.len() >= 5000 {
@@ -156,13 +149,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &network,
             )?;
 
-            // Clear vectors after saving
             block_numbers.clear();
             tx_hashes.clear();
             contract_addresses.clear();
             from_addresses.clear();
             to_addresses.clear();
             amounts_str.clear();
+            gas_used.clear();
+            tx_block_numbers.clear();
+            log_data.clear();
+            topic0.clear();
+            topic1.clear();
+            topic2.clear();
+            topic3.clear();
         }
     }
 
