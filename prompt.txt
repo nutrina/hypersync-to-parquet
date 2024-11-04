@@ -1,0 +1,24 @@
+update src/main.rs so that it stores all of the data here
+
+
+field_selection": {
+            "log": [
+                "data",
+                "topic0",
+                "topic1",
+                "topic2",
+                "topic3",
+                "transaction_hash",
+                "block_number",
+                "address"
+            ],
+            "transaction": [
+                "from",
+                "to",
+                "gas_used",
+                "hash",
+                "block_number"
+            ]
+        }
+
+	in the parquet file

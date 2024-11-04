@@ -1,3 +1,4 @@
+use ethers::types::U64;
 use glob::glob;
 use hypersync_client::{
     format::{Address, Hex},
@@ -21,7 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let client = Arc::new(Client::new(config).unwrap());
 
-    let from_block = get_latest_block_number()?;
+    let from_block = get_latest_block_number(&network)?;
 
     let query = serde_json::from_value(serde_json::json!({
         "from_block": from_block,
@@ -66,22 +67,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut contract_addresses: Vec<String> = Vec::new();
     let mut from_addresses: Vec<String> = Vec::new();
     let mut to_addresses: Vec<String> = Vec::new();
-    let mut amounts_str: Vec<String> = Vec::new(); // Store amounts as strings to preserve full precision
+    let mut amounts_str: Vec<String> = Vec::new();
     let mut gas_used: Vec<u64> = Vec::new();
+    let mut tx_block_numbers: Vec<String> = Vec::new();
+    let mut log_data: Vec<String> = Vec::new();
+    let mut topic0: Vec<String> = Vec::new();
+    let mut topic1: Vec<String> = Vec::new();
+    let mut topic2: Vec<String> = Vec::new();
+    let mut topic3: Vec<String> = Vec::new();
 
     while let Some(res) = receiver.recv().await {
         let res = res.unwrap();
 
         // Create a HashMap of transactions keyed by their hash
-        let mut tx_map: HashMap<String, (Address, Address)> = HashMap::new();
+        let mut tx_map: HashMap<String, (Address, Address, u64, String)> = HashMap::new();
 
         // Process transactions first
         for batch in res.data.transactions {
             for tx in batch {
-                if let (Some(from), Some(to), Some(hash), Some(gas)) =
-                    (tx.from, tx.to, tx.hash, tx.gas_used)
+                if let (Some(from), Some(to), Some(hash), Some(gas), Some(block_number)) =
+                    (tx.from, tx.to, tx.hash, tx.gas_used, tx.block_number)
                 {
-                    tx_map.insert(hash.encode_hex(), (from, to));
+                    let gas = U64::from_big_endian(&gas);
+                    tx_map.insert(
+                        hash.encode_hex(),
+                        (from, to, gas.as_u64(), block_number.to_string()),
+                    );
                 }
             }
         }
@@ -100,16 +111,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let contract_address = log.address.unwrap();
 
                     // Get associated transaction data
-                    if let Some((tx_from, tx_to)) = tx_map.get(&tx_hash.encode_hex()) {
+                    if let Some((tx_from, tx_to, gas, tx_block)) = tx_map.get(&tx_hash.encode_hex())
+                    {
                         // Store data in vectors
                         block_numbers.push(block_number.to_string());
                         tx_hashes.push(tx_hash.encode_hex());
                         contract_addresses.push(contract_address.encode_hex());
                         from_addresses.push(from.to_string());
                         to_addresses.push(to.to_string());
-                        // Convert amount to string to preserve full precision
                         amounts_str.push(amount.0.to_string());
+                        gas_used.push(*gas);
+                        tx_block_numbers.push(tx_block.clone());
+                        log_data.push(log.data.map_or_else(String::new, |d| d.encode_hex()));
                     }
+
+                    // Clear vectors after saving
+                    block_numbers.clear();
+                    tx_hashes.clear();
+                    contract_addresses.clear();
+                    from_addresses.clear();
+                    to_addresses.clear();
+                    amounts_str.clear();
+                    gas_used.clear();
+                    tx_block_numbers.clear();
+                    log_data.clear();
                 }
             }
         }
@@ -125,6 +150,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &from_addresses,
                 &to_addresses,
                 &amounts_str,
+                &gas_used,
+                &tx_block_numbers,
+                &log_data,
                 &network,
             )?;
 
@@ -147,6 +175,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &from_addresses,
             &to_addresses,
             &amounts_str,
+            &gas_used,
+            &tx_block_numbers,
+            &log_data,
             &network,
         )?;
     }
@@ -161,6 +192,9 @@ fn save_to_parquet(
     from_addresses: &[String],
     to_addresses: &[String],
     amounts: &[String],
+    gas_used: &[u64],
+    tx_block_numbers: &[String],
+    log_data: &[String],
     network: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use polars::prelude::*;
@@ -172,6 +206,9 @@ fn save_to_parquet(
         Series::new("from_address".into(), from_addresses.to_vec()).into(),
         Series::new("to_address".into(), to_addresses.to_vec()).into(),
         Series::new("amount".into(), amounts.to_vec()).into(),
+        Series::new("gas_used".into(), gas_used.to_vec()).into(),
+        Series::new("tx_block_number".into(), tx_block_numbers.to_vec()).into(),
+        Series::new("log_data".into(), log_data.to_vec()).into(),
     ])?;
 
     // Generate filename with timestamp
@@ -186,11 +223,11 @@ fn save_to_parquet(
     Ok(())
 }
 
-fn get_latest_block_number() -> Result<u64, Box<dyn std::error::Error>> {
+fn get_latest_block_number(network: &str) -> Result<u64, Box<dyn std::error::Error>> {
     let mut latest_block = 0u64;
 
     // Search for all parquet files matching the pattern
-    for entry in glob("erc20_transfers_*.parquet")? {
+    for entry in glob(&format!("erc20_transfers_{}*.parquet", network))? {
         match entry {
             Ok(path) => {
                 // Read the parquet file

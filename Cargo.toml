@@ -18,3 +18,4 @@ chrono = "0.4.38"
 polars-io = {version = "0.44.1", features = ["serde", "parquet", "lazy"]}
 glob = "0.3.1"
 hypersync-client = "0.17.0"
+ethers = "2.0.14"
