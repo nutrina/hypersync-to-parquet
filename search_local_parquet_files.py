@@ -1,52 +1,32 @@
 import os
 from eth_utils import to_bytes, to_checksum_address
 import polars as pl
-import boto3
 from typing import List, Optional, Dict
-from urllib.parse import urlparse
 import concurrent.futures
 from tqdm import tqdm
-from botocore.config import Config
 
 
-class S3PolarsSearcher:
+class LocalParquetSearcher:
     def __init__(
         self,
-        bucket_name: str,
-        aws_access_key_id: Optional[str] = None,
-        aws_secret_access_key: Optional[str] = None,
-        region_name: Optional[str] = "us-west-2",
+        directory_path: str,
         max_workers: int = 6,
     ):
-        config = Config(retries=dict(max_attempts=20), max_pool_connections=50)
-
-        self.bucket_name = bucket_name
-        self.aws_access_key_id = aws_access_key_id
-        self.aws_secret_access_key = aws_secret_access_key
-        self.region_name = region_name
+        self.directory_path = os.path.abspath(directory_path)
         self.max_workers = max_workers
-        self.s3_client = boto3.client(
-            "s3",
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key,
-            config=config,
-        )
 
     def list_parquet_files(self, prefix: str = "") -> List[str]:
-        """List all parquet files in the bucket with given prefix"""
+        """List all parquet files in the directory with given prefix"""
         parquet_files = []
-        paginator = self.s3_client.get_paginator("list_objects_v2")
 
         try:
-            for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
-                if "Contents" in page:
-                    parquet_files.extend(
-                        [
-                            f"s3://{self.bucket_name}/{obj['Key']}"
-                            for obj in page["Contents"]
-                            if obj["Key"].endswith(".parquet")
-                        ]
-                    )
+            for root, _, files in os.walk(self.directory_path):
+                for file in files:
+                    if file.endswith(".parquet") and (
+                        not prefix or file.startswith(prefix)
+                    ):
+                        full_path = os.path.join(root, file)
+                        parquet_files.append(full_path)
 
             print(f"Found {len(parquet_files)} parquet files")
             return parquet_files
@@ -59,7 +39,7 @@ class S3PolarsSearcher:
         try:
             return pl.scan_parquet(file_path).schema
         except Exception as e:
-            print(f"Error getting schema: {e}")
+            print(f"Error getting schema for {file_path}: {e}")
             return None
 
     def process_file_chunk(self, files: List[str], address: str) -> pl.DataFrame:
@@ -84,10 +64,6 @@ class S3PolarsSearcher:
                 cache=True,
                 rechunk=True,
                 low_memory=True,
-                storage_options={
-                    "aws_access_key_id": self.aws_access_key_id,
-                    "aws_secret_access_key": self.aws_secret_access_key,
-                },
             )
 
             # Apply filter
@@ -158,18 +134,15 @@ class S3PolarsSearcher:
 
 
 def main():
-    searcher = S3PolarsSearcher(
-        bucket_name="arbitrum-transfers-with-gas",
-        aws_access_key_id="KEY",
-        aws_secret_access_key="KEY",
-        region_name="us-west-2",
+    searcher = LocalParquetSearcher(
+        directory_path="./oxdbf_test",
         max_workers=50,
     )
 
     search_address = "0xDbf14bc7111e5F9Ed0423Ef8792258b7EBa8764c"
 
     # First check schema of one file
-    first_file = searcher.list_parquet_files("erc20_transfers_arbitrum_")[0]
+    first_file = searcher.list_parquet_files("erc20_transfers_")[0]
     print("\nParquet Schema:")
     print(searcher.get_schema(first_file))
 

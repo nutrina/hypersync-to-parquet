@@ -22,11 +22,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let client = Arc::new(Client::new(config).unwrap());
 
-    let from_block = get_latest_block_number(&network)?;
+    // let from_block = get_latest_block_number(&network)?;
 
     let query = serde_json::from_value(serde_json::json!({
         "from_block": 0,
-        "to_block": 70171065,
+        "to_block": 276830754,
         "logs": [{
             "topics": [
                 ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"],
@@ -212,10 +212,10 @@ fn save_to_parquet(
     ])?;
 
     // Generate filename with timestamp
-    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
     let filename = format!(
-        "erc20_transfers_with_gas_up_to_block_70171065_{}_{}.parquet",
-        network, timestamp
+        "erc20_transfer_test_output_11_21/erc20_transfers_with_gas_from_block_{}_to_block_{}.parquet",
+        block_numbers.first().unwrap(),
+        block_numbers.last().unwrap()
     );
 
     // Save to parquet file with compression
