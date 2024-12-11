@@ -5,4 +5,4 @@ CREATE TABLE
         status INT NULL
     );
 
-CREATE INDEX idx_logs_composite ON blocks (block_number, status);
+CREATE INDEX idx_blocks_composite ON blocks (block_number, status);

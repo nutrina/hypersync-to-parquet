@@ -7,16 +7,9 @@ edition = "2021"
 
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"
-polars-arrow = { version = "0.42", features = [
-  "compute_aggregate",
-] }
 env_logger = "0.4"
 url = "2.5.2"
-ruint = "1.12.3"
-polars = {version="0.44.1", features = ["serde", "lazy", "parquet"]}
 chrono = "0.4.38"
-polars-io = {version = "0.44.1", features = ["serde", "parquet", "lazy"]}
-glob = "0.3.1"
 hypersync-client = "0.17.0"
 ethers = "2.0.14"
 tokio-postgres = "0.7"

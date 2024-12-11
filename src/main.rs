@@ -1,11 +1,8 @@
 use ethers::{abi::AbiEncode, types::U64};
-use glob::glob;
 use hypersync_client::{
     format::{Address, Hex},
     Client, ClientConfig, Decoder, StreamConfig,
 };
-use polars::lazy::dsl::col;
-use polars::prelude::*;
 use std::env;
 use std::{collections::HashMap, sync::Arc};
 use url::Url;
@@ -248,51 +245,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-}
-
-fn save_to_parquet(
-    block_numbers: &[String],
-    tx_hashes: &[String],
-    contract_addresses: &[String],
-    from_addresses: &[String],
-    to_addresses: &[String],
-    amounts: &[String],
-    gas_used: &[u64],
-    tx_block_numbers: &[String],
-    log_data: &[String],
-    network: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use polars::prelude::*;
-
-    let df = DataFrame::new(vec![
-        Series::new("block_number".into(), block_numbers.to_vec()).into(),
-        Series::new("tx_hash".into(), tx_hashes.to_vec()).into(),
-        Series::new("contract_address".into(), contract_addresses.to_vec()).into(),
-        Series::new("from_address".into(), from_addresses.to_vec()).into(),
-        Series::new("to_address".into(), to_addresses.to_vec()).into(),
-        Series::new("amount".into(), amounts.to_vec()).into(),
-        Series::new("gas_used".into(), gas_used.to_vec()).into(),
-        Series::new("tx_block_number".into(), tx_block_numbers.to_vec()).into(),
-        Series::new("log_data".into(), log_data.to_vec()).into(),
-    ])?;
-
-    // Generate filename with timestamp
-    let filename = format!(
-        "erc20_transfer_test_output_11_21/erc20_transfers_with_gas_from_block_{}_to_block_{}.parquet",
-        block_numbers.first().unwrap(),
-        block_numbers.last().unwrap()
-    );
-
-    // Save to parquet file with compression
-    let mut file = std::fs::File::create(filename.clone())?;
-    ParquetWriter::new(&mut file).finish(&mut df.clone())?;
-
-    println!("Saved {} records to {}", df.height(), filename);
-    Ok(())
-}
-
-fn get_latest_block_number(network: &str) -> Result<u64, Box<dyn std::error::Error>> {
-    let mut latest_block = 0u64;
-
-    Ok(latest_block)
 }
