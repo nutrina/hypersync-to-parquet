@@ -8,12 +8,13 @@ use std::env;
 use std::{collections::HashMap, sync::Arc};
 use url::Url;
 mod transaction_writer;
+use rustls::crypto::ring as provider;
 use transaction_writer::{LogRecord, TransactionRecord, TransactionWriter}; // Import the `Person` struct
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Install the default cryptographic provider
-    // CryptoProvider::install_default();
+    provider::default_provider().install_default().unwrap();
 
     env_logger::init().unwrap();
 

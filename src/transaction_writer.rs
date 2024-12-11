@@ -189,6 +189,7 @@ impl TransactionWriter {
             let tls = MakeRustlsConnect::new(tls_config);
 
             mgr = Some(Manager::from_config(pg_config, tls, mgr_config));
+            println!("Done initializing using Tls");
         } else {
             println!("Using NoTls");
             mgr = Some(Manager::from_config(pg_config, NoTls, mgr_config));
