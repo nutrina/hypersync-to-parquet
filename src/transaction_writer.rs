@@ -1,16 +1,20 @@
-use bigdecimal::BigDecimal;
 use bytes::Bytes;
+use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use futures::SinkExt;
+use rustls::ClientConfig as RustlsClientConfig;
 use std::env;
-use tokio_postgres::{config::Config, Client, NoTls, Transaction};
+use std::{fs::File, io::BufReader};
+use tokio_postgres::{config::Config, Client, NoTls};
+use tokio_postgres_rustls::MakeRustlsConnect;
 
 pub struct TransactionWriter {
-    db_user: String,
-    db_password: String,
-    db_host: String,
-    db_name: String,
-    client: Option<Client>,
-    copy_stmt: String,
+    // db_user: String,
+    // db_password: String,
+    // db_host: String,
+    // db_port: u16,
+    // db_name: String,
+    // client: Option<Client>,
+    pool: Pool,
 }
 
 pub struct LogRecord {
@@ -144,39 +148,82 @@ impl TransactionWriter {
         let db_password = env::var("DB_PASSWORD").unwrap();
         let db_host = env::var("DB_HOST").unwrap();
         let db_name = env::var("DB_NAME").unwrap();
+        let db_port = env::var("DB_PORT").unwrap().parse::<u16>().unwrap();
+        let ca_cert = env::var("CERT_FILE").unwrap();
 
         println!("DB user: {}", db_user);
         println!("DB host: {}", db_host);
         println!("DB name: {}", db_name);
-        println!("DB pwd : {}", db_password);
+        println!("CERT   : {}", ca_cert);
 
-        Self {
-            db_host,
-            db_name,
-            db_password,
-            db_user,
-            copy_stmt: String::from("COPY transactions (network_id, status, from_address, to_address, gas, gas_price, gas_used, cumulative_gas_used, effective_gas_price, input, block_number, tx_hash, tx_index, l1_fee, l1_gas_price, l1_gas_used, l1_fee_scalar, gas_used_for_l1) FROM STDIN "),
-            client: None,
+        let mut pg_config = tokio_postgres::Config::new();
+
+        pg_config
+            .user(&db_user)
+            .password(&db_password)
+            .dbname(&db_name)
+            .host(&db_host)
+            .port(db_port);
+
+        let mgr: Option<Manager>;
+
+        let mgr_config = ManagerConfig {
+            recycling_method: RecyclingMethod::Fast,
+        };
+
+        if ca_cert != "" {
+            println!("Using TLS");
+
+            let cert_file = File::open(ca_cert).unwrap();
+
+            let mut buf = BufReader::new(cert_file);
+            let mut root_store: rustls::RootCertStore = rustls::RootCertStore::empty();
+            for cert in rustls_pemfile::certs(&mut buf) {
+                root_store.add(cert.unwrap()).unwrap();
+            }
+
+            let tls_config = RustlsClientConfig::builder()
+                .with_root_certificates(root_store)
+                .with_no_client_auth();
+
+            let tls = MakeRustlsConnect::new(tls_config);
+
+            mgr = Some(Manager::from_config(pg_config, tls, mgr_config));
+        } else {
+            println!("Using NoTls");
+            mgr = Some(Manager::from_config(pg_config, NoTls, mgr_config));
         }
+
+        let pool = Pool::builder(mgr.unwrap()).max_size(16).build().unwrap();
+
+        Self { pool }
+        // Self {
+        //     db_host,
+        //     db_port,
+        //     db_name,
+        //     db_password,
+        //     db_user,
+        //     client: None,
+        // }
     }
 
     pub async fn init(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let (client, connection) = Config::new()
-            .user(&self.db_user)
-            .password(&self.db_password)
-            .host(&self.db_host)
-            .dbname(&self.db_name)
-            .connect(NoTls)
-            .await?;
+        // let (client, connection) = Config::new()
+        //     .user(&self.db_user)
+        //     .password(&self.db_password)
+        //     .host(&self.db_host)
+        //     .dbname(&self.db_name)
+        //     .connect(NoTls)
+        //     .await?;
 
-        self.client = Some(client);
+        // self.client = Some(client);
 
         // Spawn the connection handler
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                eprintln!("connection error: {}", e);
-            }
-        });
+        // tokio::spawn(async move {
+        //     if let Err(e) = connection.await {
+        //         eprintln!("connection error: {}", e);
+        //     }
+        // });
 
         Ok(())
     }
@@ -189,63 +236,43 @@ impl TransactionWriter {
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Start a new transaction
         let _block_number = block_number as i64; // TODO: use BigDecimal here?
+        let client = self.pool.get().await.unwrap();
 
-        match &mut self.client {
-            Some(client) => {
-                let row = client
-                    .query_one(
-                        "INSERT INTO blocks (block_number) VALUES ($1) RETURNING id",
-                        &[&_block_number],
-                    )
-                    .await?;
+        let row = client
+            .query_one(
+                "INSERT INTO blocks (block_number) VALUES ($1) RETURNING id",
+                &[&_block_number],
+            )
+            .await?;
 
-                let id: i32 = row.get(0);
+        let id: i32 = row.get(0);
 
-                write_transactions(client, transaction_records).await?;
-                write_logs(client, log_records).await?;
+        write_transactions(&client, transaction_records).await?;
+        write_logs(&client, log_records).await?;
 
-                client
-                    .execute("UPDATE blocks SET status = '1' WHERE id = $1 ", &[&id])
-                    .await?;
-            }
-            None => {
-                println!("!!! No DB client !!!");
-                return Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "!!! No DB client !!!",
-                )));
-            }
-        }
+        client
+            .execute("UPDATE blocks SET status = '1' WHERE id = $1 ", &[&id])
+            .await?;
+
         Ok(())
     }
 
     pub async fn get_latest_block_number(&mut self) -> Result<i64, Box<dyn std::error::Error>> {
         // Query the latest block_number in transactions
-        let max_block_number: i64 = match &self.client {
-            Some(client) => {
-                let row = client
-                    .query_one("SELECT MAX(block_number::BIGINT) FROM transactions", &[])
-                    .await?;
+        let client = self.pool.get().await.unwrap();
 
-                let max_block_transactions: i64 = row.try_get(0).unwrap_or(-1);
+        let row = client
+            .query_one("SELECT MAX(block_number::BIGINT) FROM transactions", &[])
+            .await?;
 
-                let row = client
-                    .query_one("SELECT MAX(block_number::BIGINT) FROM logs", &[])
-                    .await?;
+        let max_block_transactions: i64 = row.try_get(0).unwrap_or(-1);
 
-                let max_block_logs: i64 = row.try_get(0).unwrap_or(-1);
+        let row = client
+            .query_one("SELECT MAX(block_number::BIGINT) FROM logs", &[])
+            .await?;
 
-                std::cmp::max(max_block_transactions, max_block_logs)
-            }
-            None => {
-                println!("!!! No DB client !!!");
-                return Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "!!! No DB client !!!",
-                )));
-            }
-        };
+        let max_block_logs: i64 = row.try_get(0).unwrap_or(-1);
 
-        Ok(max_block_number)
+        Ok(std::cmp::max(max_block_transactions, max_block_logs))
     }
 }
