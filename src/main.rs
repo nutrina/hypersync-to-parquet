@@ -3,15 +3,18 @@ use hypersync_client::{
     format::{Address, Hex},
     Client, ClientConfig, Decoder, StreamConfig,
 };
+use rustls::crypto::CryptoProvider;
 use std::env;
 use std::{collections::HashMap, sync::Arc};
 use url::Url;
-
 mod transaction_writer;
 use transaction_writer::{LogRecord, TransactionRecord, TransactionWriter}; // Import the `Person` struct
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Install the default cryptographic provider
+    // CryptoProvider::install_default();
+
     env_logger::init().unwrap();
 
     let mut db_writer = TransactionWriter::new().await;
@@ -19,6 +22,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let network = "eth";
 
     db_writer.init().await?;
+    let block_number = db_writer.get_latest_block_number().await?;
+    println!("Latest block number: {}", block_number);
 
     let bearer_token = env::var("HYPERSYNC_BEARER_TOKEN").unwrap();
 
