@@ -262,20 +262,26 @@ impl TransactionWriter {
         // Query the latest block_number in transactions
         let client = self.pool.get().await.unwrap();
 
+        // let row = client
+        //     .query_one("SELECT MAX(block_number::BIGINT) FROM transactions", &[])
+        //     // .query_one("SELECT block_number::BIGINT FROM transactions ORDER BY block_number DESC LIMIT 1", &[])
+        //     .await?;
+
+        // let max_block_transactions: i64 = row.try_get(0).unwrap_or(-1);
+
+        // let row = client
+        //     .query_one("SELECT MAX(block_number::BIGINT) FROM logs", &[])
+        //     // .query_one("SELECT block_number::BIGINT FROM logs ORDER BY block_number DESC LIMIT 1", &[])
+        //     .await?;
+
+        // let max_block_logs: i64 = row.try_get(0).unwrap_or(-1);
+
         let row = client
-            // .query_one("SELECT MAX(block_number::BIGINT) FROM transactions", &[])
-            .query_one("SELECT block_number::BIGINT FROM transactions ORDER BY block_number DESC LIMIT 1", &[])
+            .query_one("SELECT MAX(block_number::BIGINT) FROM blocks limit 1", &[])
             .await?;
 
-        let max_block_transactions: i64 = row.try_get(0).unwrap_or(-1);
+        let max_block: i64 = row.try_get(0).unwrap_or(-1);
 
-        let row = client
-            // .query_one("SELECT MAX(block_number::BIGINT) FROM logs", &[])
-            .query_one("SELECT block_number::BIGINT FROM logs ORDER BY block_number DESC LIMIT 1", &[])
-            .await?;
-
-        let max_block_logs: i64 = row.try_get(0).unwrap_or(-1);
-
-        Ok(std::cmp::max(max_block_transactions, max_block_logs))
+        Ok(max_block)
     }
 }
