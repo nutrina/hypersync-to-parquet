@@ -11,20 +11,10 @@ mod transaction_writer;
 use rustls::crypto::ring as provider;
 use transaction_writer::{LogRecord, TransactionRecord, TransactionWriter}; // Import the `Person` struct
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Install the default cryptographic provider
-    provider::default_provider().install_default().unwrap();
-
-    env_logger::init().unwrap();
-
-    let mut db_writer = TransactionWriter::new().await;
+async fn sync_block_chain(
+    db_writer: &mut TransactionWriter,
+) -> Result<(), Box<dyn std::error::Error>> {
     let network_id: i32 = 1;
-    let network = "eth";
-
-    db_writer.init().await?;
-    let block_number = db_writer.get_latest_block_number().await?;
-    println!("Latest block number: {}", block_number);
 
     let bearer_token = env::var("HYPERSYNC_BEARER_TOKEN").unwrap();
 
@@ -250,5 +240,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("===> DONE writing logs & transactions");
     }
 
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Install the default cryptographic provider
+    provider::default_provider().install_default().unwrap();
+
+    env_logger::init().unwrap();
+
+    let mut db_writer = TransactionWriter::new().await;
+    let network = "eth";
+
+    db_writer.init().await?;
+    let block_number = db_writer.get_latest_block_number().await?;
+    println!("Latest block number: {}", block_number);
+
+    // sync_block_chain().await
+    let missing_ranges = db_writer.get_missing_block_ranges().await.unwrap();
+
+    for range in missing_ranges.iter() {
+        println!("Missing range: {:?} -> {:?}", range.from_block, range.to_block)
+    }
     Ok(())
 }

@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use futures::SinkExt;
+use hypersync_client::simple_types::Block;
 use rustls::ClientConfig as RustlsClientConfig;
 use std::env;
 use std::{fs::File, io::BufReader};
@@ -49,6 +50,12 @@ pub struct TransactionRecord {
     pub l1_gas_used: String,
     pub l1_fee_scalar: String,
     pub gas_used_for_l1: String,
+}
+
+#[derive(Debug)]
+pub struct BlockRange {
+    pub from_block: i64,
+    pub to_block: i64,
 }
 
 async fn write_transactions(
@@ -283,5 +290,44 @@ impl TransactionWriter {
         let max_block: i64 = row.try_get(0).unwrap_or(-1);
 
         Ok(max_block)
+    }
+
+    pub async fn get_missing_block_ranges(
+        &mut self,
+    ) -> Result<Vec<BlockRange>, Box<dyn std::error::Error>> {
+        let mut result = Vec::new(); // Create an empty vector
+        let client = self.pool.get().await.unwrap();
+
+        let rows = client
+            .query(
+                "WITH blanks AS
+  (SELECT id,
+          status,
+          block_number,
+          LAG(block_number) OVER (
+                                  ORDER BY id) AS previous_block_number,
+                                 LAG(id) OVER (
+                                               ORDER BY id) AS previous_id
+   FROM blocks)
+SELECT id,
+       previous_id,
+       status,
+       block_number,
+       previous_block_number
+FROM blanks
+WHERE status IS NULL",
+                &[],
+            )
+            .await?;
+
+        for row in rows.iter() {
+            let item = BlockRange{
+                from_block: row.try_get(3).unwrap(),
+                to_block: row.try_get(4).unwrap(),
+            };
+            result.push(item);
+        }
+            
+        Ok(result)
     }
 }
