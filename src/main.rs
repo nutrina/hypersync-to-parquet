@@ -8,11 +8,22 @@ use std::env;
 use std::{collections::HashMap, sync::Arc};
 use url::Url;
 mod transaction_writer;
+mod transfers;
+use ethers::types::{Filter, Log};
 use rustls::crypto::ring as provider;
-use transaction_writer::{LogRecord, TransactionRecord, TransactionWriter}; // Import the `Person` struct
 
+use hex;
+use transaction_writer::{LogRecord, TransactionRecord, TransactionWriter}; // Import the `Person` struct
+use transfers::{decode_transfer_event, Transfer}; // Import the `Person` struct
+
+/*
+from_block - inclusive
+to_block - not inclusive
+ */
 async fn sync_block_chain(
     db_writer: &mut TransactionWriter,
+    from_block: i64,
+    to_block: i64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let network_id: i32 = 1;
     let network = "eth";
@@ -28,10 +39,9 @@ async fn sync_block_chain(
 
     let client = Arc::new(Client::new(config).unwrap());
 
-    let from_block = db_writer.get_latest_block_number().await? + 1;
-
     let query = serde_json::from_value(serde_json::json!({
         "from_block": from_block,
+        "to_block": to_block,
         "logs": [{
             "topics": [
                 // ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"],
@@ -253,20 +263,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut db_writer = TransactionWriter::new().await;
 
+    let from_block = db_writer.get_latest_block_number().await? + 1;
     db_writer.init().await?;
+
     let block_number = db_writer.get_latest_block_number().await?;
     println!("Latest block number: {}", block_number);
 
-    // sync_block_chain().await
-    let missing_ranges = db_writer.get_missing_block_ranges().await.unwrap();
+    
+    // ---- Sync everything ....
+    // sync_block_chain(&mut db_writer, from_block, 0).await?;
+    // ---- End syncing everything
 
+    // ---- Sync only the missing blocks
+    let missing_ranges = db_writer.get_missing_block_ranges().await.unwrap();
     for range in missing_ranges.iter() {
         println!(
             "Missing range: {:?} -> {:?}",
             range.from_block, range.to_block
         );
         db_writer.clear_block_range(range).await.unwrap();
+        sync_block_chain(&mut db_writer, range.from_block, range.to_block + 1).await?;
     }
+    // ---- End Sync only the missing blocks
 
+    // hash=0x2adf58cb7c7ee6177705a4f99fbe8c51f5b57d5fc4d434755a6afe79a5a43553
+    // let log = Log {
+    //     address: "0xd3804bdd39fce95ab4fd5449bc40b94dbd1a303f".parse().unwrap(),
+    //     topics: vec![
+    //         "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef".parse()?,
+    //         "0x0000000000000000000000004859357af7b96393768073923b21e7686771123e".parse()?,
+    //         "0x00000000000000000000000011bc81a1e929078c0c7c37d4fab8d85506dce24d".parse()?,
+    //     ],
+    //     data: hex::decode("0000000000000000000000000000000000000000000000000000000008e18f40").unwrap().into(),
+    //     ..Default::default()
+    // };
+
+    // // Decode the log
+    // match decode_transfer_event(log) {
+    //     Ok(event) => println!("Decoded Transfer Event: {:?}", event),
+    //     Err(e) => eprintln!("Failed to decode event: {}", e),
+    // }
     Ok(())
 }

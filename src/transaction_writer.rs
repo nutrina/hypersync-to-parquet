@@ -250,7 +250,7 @@ impl TransactionWriter {
 
         let row = client
             .query_one(
-                "INSERT INTO blocks (block_number) VALUES ($1) RETURNING id",
+                "INSERT INTO blocks (block_number) VALUES ($1) ON CONFLICT (block_number) DO UPDATE SET block_number = EXCLUDED.block_number  RETURNING id",
                 &[&_block_number],
             )
             .await?;

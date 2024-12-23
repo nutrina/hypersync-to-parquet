@@ -91,6 +91,7 @@ dependencies = [
  "env_logger",
  "ethers",
  "futures",
+ "hex",
  "hypersync-client",
  "rust_decimal",
  "rustls 0.23.19",

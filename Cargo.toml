@@ -11,7 +11,6 @@ env_logger = "0.4"
 url = "2.5.2"
 chrono = "0.4.38"
 hypersync-client = "0.17.0"
-ethers = "2.0.14"
 bytes = "1.4"
 bigdecimal = "0.4"
 tokio-postgres-rustls = "0.12"
@@ -22,5 +21,6 @@ tokio-rustls = "0.23"
 futures = "0.3.29"
 tokio-postgres = { version = "0.7.10", features = ["with-chrono-0_4"] }
 rust_decimal = { version = "1", features = ["db-tokio-postgres"] }
-
+ethers = { version = "2.0", features = ["abigen"] }
+hex = "0.4"
 
