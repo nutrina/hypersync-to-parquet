@@ -292,6 +292,7 @@ async fn create_erc20_transfer_records(
     println!("Next log id: {}", next_log_id);
     while let Some(erc20_logs) = db_writer.get_erc20_log_records(next_log_id).await.unwrap() {
         next_log_id = erc20_logs.last().unwrap().id.parse::<i32>()? + 1;
+        println!("Next log id: {}", next_log_id);
 
         for erc20_log in erc20_logs.iter() {
             let data = if erc20_log.data.len() >= 2 {
