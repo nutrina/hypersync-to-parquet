@@ -1,7 +1,9 @@
+use bigdecimal::BigDecimal;
 use bytes::Bytes;
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use futures::SinkExt;
 use hypersync_client::simple_types::Block;
+use rust_decimal::Decimal;
 use rustls::ClientConfig as RustlsClientConfig;
 use std::env;
 use std::{fs::File, io::BufReader};
@@ -338,18 +340,23 @@ WHERE status IS NULL",
         range: &BlockRange,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let client = self.pool.get().await.unwrap();
+
+        // Convert i64 to BigDecimal
+        let from_block = rust_decimal::Decimal::from(range.from_block);
+        let to_block = rust_decimal::Decimal::from(range.to_block);
+
         println!("Deleting entries in logs");
         client
             .execute(
                 "DELETE FROM logs WHERE block_number >= $1 AND block_number <= $2",
-                &[&range.from_block, &range.to_block],
+                &[&from_block, &to_block],
             )
             .await?;
         println!("Deleting entries in transactions");
         client
             .execute(
                 "DELETE FROM transactions WHERE block_number >= $1 AND block_number <= $2",
-                &[&range.from_block, &range.to_block],
+                &[&from_block, &to_block],
             )
             .await?;
 
