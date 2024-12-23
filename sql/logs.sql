@@ -24,3 +24,24 @@ CREATE INDEX idx_logs_composite ON logs (
     topic2,
     topic3
 );
+
+CREATE INDEX idx_logs_network_id ON logs (
+    network_id
+);
+
+CREATE INDEX idx_logs_block_number ON logs (
+    block_number
+);
+
+CREATE INDEX idx_logs_tx_hash ON logs (
+    tx_hash
+);
+
+CREATE INDEX idx_logs_contract_address ON logs (
+    contract_address
+);
+
+CREATE INDEX idx_logs_topic0 ON logs (
+    topic0
+);
+

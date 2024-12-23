@@ -40,3 +40,25 @@ CREATE INDEX idx_transactions_composite ON transactions (
     l1_fee_scalar,
     gas_used_for_l1
 );
+
+
+CREATE INDEX idx_transactions_from_address ON transactions (
+    from_address
+);
+
+CREATE INDEX idx_transactions_to_address ON transactions (
+    to_address
+);
+
+DROP INDEX idx_transactions_tx_hash;
+CREATE INDEX idx_transactions_tx_hash ON transactions (
+    tx_hash
+);
+
+CREATE INDEX idx_transactions_block_number ON transactions (
+    block_number
+);
+
+CREATE INDEX idx_transactions_status ON transactions (
+    status
+);
