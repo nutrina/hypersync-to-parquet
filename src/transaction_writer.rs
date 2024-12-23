@@ -1,4 +1,3 @@
-use bigdecimal::BigDecimal;
 use bytes::Bytes;
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use futures::SinkExt;
@@ -20,7 +19,22 @@ pub struct TransactionWriter {
     pool: Pool,
 }
 
+pub struct TransferRecord {
+    pub id: String,
+    pub log_id: String,
+    pub transfer_type: String,
+    pub network_id: String,
+    pub block_number: String,
+    pub tx_hash: String,
+    pub tx_index: String,
+    pub contract_address: String,
+    pub from_address: String,
+    pub to_address: String,
+    pub amount: String,
+}
+
 pub struct LogRecord {
+    pub id: String,
     pub network_id: String,
     pub block_number: String,
     pub tx_hash: String,
@@ -140,6 +154,45 @@ async fn write_logs(
             &log_record.topic1,
             &log_record.topic2,
             &log_record.topic3,
+        );
+        let buf = Bytes::from(line);
+        sink.send(buf).await?;
+    }
+
+    sink.flush().await?;
+    sink.close().await?;
+
+    Ok(())
+}
+
+async fn write_erc20_transfers(
+    client: &Client,
+    log_records: &[TransferRecord],
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Stream the data to the database
+
+    println!(
+        "write_erc20_transfers, num log_records {}",
+        log_records.len()
+    );
+
+    let copy_stmt = String::from("COPY transfers (log_id, transfer_type, network_id, block_number, tx_hash, tx_index, contract_address, from_address, to_address, amount) FROM STDIN ");
+    let sink = client.copy_in(&copy_stmt).await?;
+    let mut sink = Box::pin(sink); // Pin the sink
+
+    for log_record in log_records {
+        let line = format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            &log_record.log_id,
+            &log_record.transfer_type,
+            &log_record.network_id,
+            &log_record.block_number,
+            &log_record.tx_hash,
+            &log_record.tx_index,
+            &log_record.contract_address,
+            &log_record.from_address,
+            &log_record.to_address,
+            &log_record.amount,
         );
         let buf = Bytes::from(line);
         sink.send(buf).await?;
@@ -271,20 +324,6 @@ impl TransactionWriter {
         // Query the latest block_number in transactions
         let client = self.pool.get().await.unwrap();
 
-        // let row = client
-        //     .query_one("SELECT MAX(block_number::BIGINT) FROM transactions", &[])
-        //     // .query_one("SELECT block_number::BIGINT FROM transactions ORDER BY block_number DESC LIMIT 1", &[])
-        //     .await?;
-
-        // let max_block_transactions: i64 = row.try_get(0).unwrap_or(-1);
-
-        // let row = client
-        //     .query_one("SELECT MAX(block_number::BIGINT) FROM logs", &[])
-        //     // .query_one("SELECT block_number::BIGINT FROM logs ORDER BY block_number DESC LIMIT 1", &[])
-        //     .await?;
-
-        // let max_block_logs: i64 = row.try_get(0).unwrap_or(-1);
-
         let row = client
             .query_one("SELECT MAX(block_number::BIGINT) FROM blocks limit 1", &[])
             .await?;
@@ -359,6 +398,55 @@ WHERE status IS NULL",
                 &[&from_block, &to_block],
             )
             .await?;
+
+        Ok(())
+    }
+
+    pub async fn get_erc20_log_records(
+        &mut self,
+        from_id: i32,
+    ) -> Result<Option<Vec<LogRecord>>, Box<dyn std::error::Error>> {
+        let mut result = Vec::new(); // Create an empty vector
+        let client = self.pool.get().await.unwrap();
+
+        let rows = client
+            .query(
+                "SELECT id, network_id, block_number, tx_hash, tx_index, contract_address, log_data, topic0, topic1, topic2, topic3 FROM logs WHERE id >= $1 AND topic0='0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef' ORDER by id LIMIT 1000",
+                &[&from_id],
+            )
+            .await?;
+
+        for row in rows.iter() {
+            let item = LogRecord {
+                id: row.try_get::<_, i32>(0).unwrap().to_string(),
+                network_id: row.try_get::<_, i64>(1).unwrap().to_string(),
+                block_number: row.try_get::<_, Decimal>(2).unwrap().to_string(),
+                tx_hash: row.try_get(3).unwrap(),
+                tx_index: row.try_get::<_, Decimal>(4).unwrap().to_string(),
+                contract_address: row.try_get(5).unwrap(),
+                data: row.try_get(6).unwrap(),
+                topic0: row.try_get(7).unwrap(),
+                topic1: row.try_get(8).unwrap(),
+                topic2: row.try_get(9).unwrap(),
+                topic3: row.try_get(10).unwrap(),
+            };
+            result.push(item);
+        }
+
+        if result.len() > 0 {
+            println!("Returning {} log records", result.len());
+            return Ok(Some(result));
+        }
+        Ok(None)
+    }
+
+    pub async fn write_transfers(
+        &mut self,
+        records: &[TransferRecord],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let client = self.pool.get().await.unwrap();
+
+        write_erc20_transfers(&client, records).await?;
 
         Ok(())
     }

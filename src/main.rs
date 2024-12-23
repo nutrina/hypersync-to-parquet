@@ -9,11 +9,11 @@ use std::{collections::HashMap, sync::Arc};
 use url::Url;
 mod transaction_writer;
 mod transfers;
-use ethers::types::{Filter, Log};
+use ethers::types::{Filter, Log, TxHash};
 use rustls::crypto::ring as provider;
 
 use hex;
-use transaction_writer::{LogRecord, TransactionRecord, TransactionWriter}; // Import the `Person` struct
+use transaction_writer::{LogRecord, TransactionRecord, TransactionWriter, TransferRecord}; // Import the `Person` struct
 use transfers::{decode_transfer_event, Transfer}; // Import the `Person` struct
 
 /*
@@ -151,6 +151,7 @@ async fn sync_block_chain(
                         .map_or_else(String::new, |v| v.encode_hex()),
                 ) {
                     log_records.push(LogRecord {
+                        id: String::from(""),
                         network_id: network_id.to_string(),
                         block_number: block_number.to_string(),
                         tx_hash: tx_hash.encode_hex(),
@@ -254,6 +255,97 @@ async fn sync_block_chain(
     Ok(())
 }
 
+async fn sync_all_blockchain_blocks(
+    db_writer: &mut TransactionWriter,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let from_block = db_writer.get_latest_block_number().await? + 1;
+
+    let block_number = db_writer.get_latest_block_number().await?;
+    println!("Latest block number: {}", block_number);
+
+    sync_block_chain(db_writer, from_block, 0).await?;
+    Ok(())
+}
+
+async fn sync_missing_block_ranges(
+    db_writer: &mut TransactionWriter,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let missing_ranges = db_writer.get_missing_block_ranges().await.unwrap();
+    for range in missing_ranges.iter() {
+        println!(
+            "Missing range: {:?} -> {:?}",
+            range.from_block, range.to_block
+        );
+        db_writer.clear_block_range(range).await.unwrap();
+        sync_block_chain(db_writer, range.from_block, range.to_block + 1).await?;
+    }
+    Ok(())
+}
+
+async fn create_erc20_transfer_records(
+    db_writer: &mut TransactionWriter,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut next_log_id: i32 = 0;
+    let mut transfer_records: Vec<TransferRecord> = Vec::new();
+
+    while let Some(erc20_logs) = db_writer.get_erc20_log_records(next_log_id).await.unwrap() {
+        next_log_id = erc20_logs.last().unwrap().id.parse::<i32>()? + 1;
+
+        for erc20_log in erc20_logs.iter() {
+            let data = if erc20_log.data.len() >= 2 {
+                erc20_log.data[2..].to_string()
+            } else {
+                String::new()
+            };
+
+            let mut topics: Vec<TxHash> = Vec::new();
+
+            if erc20_log.topic0.len() > 0 {
+                topics.push(erc20_log.topic0.parse()?);
+            }
+            if erc20_log.topic1.len() > 0 {
+                topics.push(erc20_log.topic1.parse()?);
+            }
+            if erc20_log.topic2.len() > 0 {
+                topics.push(erc20_log.topic2.parse()?);
+            }
+            if erc20_log.topic3.len() > 0 {
+                topics.push(erc20_log.topic3.parse()?);
+            }
+
+            let eth_event_log = Log {
+                address: erc20_log.contract_address.parse().unwrap(),
+                topics: topics,
+                data: hex::decode(data).unwrap().into(),
+                ..Default::default()
+            };
+
+            // Decode the log
+            match decode_transfer_event(eth_event_log) {
+                Ok(event) => {
+                    transfer_records.push(TransferRecord {
+                        id: String::from(""),
+                        log_id: erc20_log.id.clone(),
+                        network_id: erc20_log.network_id.clone(),
+                        block_number: erc20_log.block_number.clone(),
+                        transfer_type: String::from("1"),
+                        tx_hash: erc20_log.tx_hash.clone(),
+                        tx_index: erc20_log.tx_index.clone(),
+                        contract_address: erc20_log.contract_address.clone(),
+                        from_address: String::from("0x") + hex::encode(event.from.as_bytes()).as_str(),
+                        to_address: String::from("0x") + hex::encode(event.to.as_bytes()).as_str(),
+                        amount: event.value.to_string(),
+                    });
+                }
+                Err(e) => eprintln!("Failed to decode event: {}", e),
+            }
+        }
+
+        db_writer.write_transfers(&transfer_records).await?;
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Install the default cryptographic provider
@@ -263,27 +355,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut db_writer = TransactionWriter::new().await;
 
-    let from_block = db_writer.get_latest_block_number().await? + 1;
     db_writer.init().await?;
 
-    let block_number = db_writer.get_latest_block_number().await?;
-    println!("Latest block number: {}", block_number);
+    // // ---- Sync everything ....
+    // sync_all_blockchain_blocks(&mut db_writer).await?;
+    // // ---- End syncing everything
 
-    
-    // ---- Sync everything ....
-    // sync_block_chain(&mut db_writer, from_block, 0).await?;
-    // ---- End syncing everything
+    // // ---- Sync only the missing blocks
+    // sync_missing_block_ranges(&mut db_writer).await?;
+    // // ---- End Sync only the missing blocks
 
     // ---- Sync only the missing blocks
-    let missing_ranges = db_writer.get_missing_block_ranges().await.unwrap();
-    for range in missing_ranges.iter() {
-        println!(
-            "Missing range: {:?} -> {:?}",
-            range.from_block, range.to_block
-        );
-        db_writer.clear_block_range(range).await.unwrap();
-        sync_block_chain(&mut db_writer, range.from_block, range.to_block + 1).await?;
-    }
+    create_erc20_transfer_records(&mut db_writer).await?;
     // ---- End Sync only the missing blocks
 
     // hash=0x2adf58cb7c7ee6177705a4f99fbe8c51f5b57d5fc4d434755a6afe79a5a43553

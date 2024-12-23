@@ -13,17 +13,6 @@ CREATE TABLE
         topic3 VARCHAR(66) NOT NULL
     );
 
-CREATE INDEX idx_logs_composite ON logs (
-    network_id,
-    block_number,
-    tx_hash,
-    tx_index,
-    contract_address,
-    topic0,
-    topic1,
-    topic2,
-    topic3
-);
 
 CREATE INDEX idx_logs_network_id ON logs (
     network_id

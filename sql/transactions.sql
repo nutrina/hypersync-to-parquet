@@ -21,44 +21,12 @@ CREATE TABLE
         gas_used_for_l1 NUMERIC(78, 0) NULL
     );
 
-CREATE INDEX idx_transactions_composite ON transactions (
-    network_id,
-    status,
-    from_address,
-    to_address,
-    gas,
-    gas_price,
-    gas_used,
-    cumulative_gas_used,
-    effective_gas_price,
-    block_number,
-    tx_hash,
-    tx_index,
-    l1_fee,
-    l1_gas_price,
-    l1_gas_used,
-    l1_fee_scalar,
-    gas_used_for_l1
-);
+CREATE INDEX idx_transactions_from_address ON transactions (from_address);
 
+CREATE INDEX idx_transactions_to_address ON transactions (to_address);
 
-CREATE INDEX idx_transactions_from_address ON transactions (
-    from_address
-);
+CREATE INDEX idx_transactions_tx_hash ON transactions (tx_hash);
 
-CREATE INDEX idx_transactions_to_address ON transactions (
-    to_address
-);
+CREATE INDEX idx_transactions_block_number ON transactions (block_number);
 
-DROP INDEX idx_transactions_tx_hash;
-CREATE INDEX idx_transactions_tx_hash ON transactions (
-    tx_hash
-);
-
-CREATE INDEX idx_transactions_block_number ON transactions (
-    block_number
-);
-
-CREATE INDEX idx_transactions_status ON transactions (
-    status
-);
+CREATE INDEX idx_transactions_status ON transactions (status);

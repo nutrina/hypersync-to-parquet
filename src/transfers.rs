@@ -6,10 +6,10 @@ use ethers::types::{Filter, Log};
 #[derive(Debug, EthEvent)]
 pub struct Transfer {
     #[ethevent(indexed)]
-    from: Address,
+    pub from: Address,
     #[ethevent(indexed)]
-    to: Address,
-    value: U256,
+    pub to: Address,
+    pub value: U256,
 }
 
 pub fn decode_transfer_event(log: Log) -> Result<Transfer, Box<dyn std::error::Error>> {
