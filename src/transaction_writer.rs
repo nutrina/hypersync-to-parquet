@@ -459,10 +459,14 @@ WHERE status IS NULL",
 
         let row = client
             .query_one("SELECT log_id FROM transfers ORDER BY id DESC limit 1", &[])
-            .await?;
+            .await;
 
-        let max_block: i64 = row.try_get(0).unwrap_or(-1);
-
-        Ok(max_block)
+        match row {
+            Ok(row) => {
+                let max_block: i64 = row.try_get(0).unwrap_or(-1);
+                Ok(max_block)
+            }
+            Err(e) => Ok(-1),
+        }
     }
 }
