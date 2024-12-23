@@ -323,13 +323,13 @@ WHERE status IS NULL",
         for row in rows.iter() {
             let from_block: i64 = row.try_get(4).unwrap();
             let to_block: i64 = row.try_get(3).unwrap();
-            let item = BlockRange{
+            let item = BlockRange {
                 from_block: from_block + 1,
-                to_block: to_block
+                to_block: to_block,
             };
             result.push(item);
         }
-            
+
         Ok(result)
     }
 }
