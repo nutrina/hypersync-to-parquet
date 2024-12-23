@@ -285,9 +285,11 @@ async fn sync_missing_block_ranges(
 async fn create_erc20_transfer_records(
     db_writer: &mut TransactionWriter,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut next_log_id: i32 = 0;
+    let _next_log_id: i64 = db_writer.get_latest_log_id_for_transfers().await.unwrap() + 1;
+    let mut next_log_id: i32 = _next_log_id as i32;
     let mut transfer_records: Vec<TransferRecord> = Vec::new();
 
+    println!("Next log id: {}", next_log_id);
     while let Some(erc20_logs) = db_writer.get_erc20_log_records(next_log_id).await.unwrap() {
         next_log_id = erc20_logs.last().unwrap().id.parse::<i32>()? + 1;
 
@@ -332,7 +334,8 @@ async fn create_erc20_transfer_records(
                         tx_hash: erc20_log.tx_hash.clone(),
                         tx_index: erc20_log.tx_index.clone(),
                         contract_address: erc20_log.contract_address.clone(),
-                        from_address: String::from("0x") + hex::encode(event.from.as_bytes()).as_str(),
+                        from_address: String::from("0x")
+                            + hex::encode(event.from.as_bytes()).as_str(),
                         to_address: String::from("0x") + hex::encode(event.to.as_bytes()).as_str(),
                         amount: event.value.to_string(),
                     });

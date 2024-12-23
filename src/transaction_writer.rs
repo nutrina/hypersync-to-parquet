@@ -411,7 +411,7 @@ WHERE status IS NULL",
 
         let rows = client
             .query(
-                "SELECT id, network_id, block_number, tx_hash, tx_index, contract_address, log_data, topic0, topic1, topic2, topic3 FROM logs WHERE id >= $1 AND topic0='0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef' ORDER by id LIMIT 1000",
+                "SELECT id, network_id, block_number, tx_hash, tx_index, contract_address, log_data, topic0, topic1, topic2, topic3 FROM logs WHERE id >= $1 AND topic0='0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef' ORDER by id LIMIT 100000",
                 &[&from_id],
             )
             .await?;
@@ -449,5 +449,20 @@ WHERE status IS NULL",
         write_erc20_transfers(&client, records).await?;
 
         Ok(())
+    }
+
+    pub async fn get_latest_log_id_for_transfers(
+        &mut self,
+    ) -> Result<i64, Box<dyn std::error::Error>> {
+        // Query the latest block_number in transactions
+        let client = self.pool.get().await.unwrap();
+
+        let row = client
+            .query_one("SELECT log_id FROM transfers ORDER BY id DESC limit 1", &[])
+            .await?;
+
+        let max_block: i64 = row.try_get(0).unwrap_or(-1);
+
+        Ok(max_block)
     }
 }
