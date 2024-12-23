@@ -324,12 +324,35 @@ WHERE status IS NULL",
             let from_block: i64 = row.try_get(4).unwrap();
             let to_block: i64 = row.try_get(3).unwrap();
             let item = BlockRange {
-                from_block: from_block + 1,
+                from_block: from_block + 1, // The range needs to be inclusive
                 to_block: to_block,
             };
             result.push(item);
         }
 
         Ok(result)
+    }
+
+    pub async fn clear_block_range(
+        &mut self,
+        range: &BlockRange,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let client = self.pool.get().await.unwrap();
+        println!("Deleting entries in logs");
+        client
+            .execute(
+                "DELETE FROM logs WHERE block_number >= $1 AND block_number <= $2",
+                &[&range.from_block, &range.to_block],
+            )
+            .await?;
+        println!("Deleting entries in transactions");
+        client
+            .execute(
+                "DELETE FROM transactions WHERE block_number >= $1 AND block_number <= $2",
+                &[&range.from_block, &range.to_block],
+            )
+            .await?;
+
+        Ok(())
     }
 }

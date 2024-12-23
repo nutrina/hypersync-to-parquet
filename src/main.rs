@@ -261,7 +261,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let missing_ranges = db_writer.get_missing_block_ranges().await.unwrap();
 
     for range in missing_ranges.iter() {
-        println!("Missing range: {:?} -> {:?}", range.from_block, range.to_block)
+        println!(
+            "Missing range: {:?} -> {:?}",
+            range.from_block, range.to_block
+        );
+        db_writer.clear_block_range(range);
     }
+
     Ok(())
 }
