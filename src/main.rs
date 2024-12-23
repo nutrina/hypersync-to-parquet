@@ -265,7 +265,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Missing range: {:?} -> {:?}",
             range.from_block, range.to_block
         );
-        db_writer.clear_block_range(range);
+        db_writer.clear_block_range(range).await;
     }
 
     Ok(())
