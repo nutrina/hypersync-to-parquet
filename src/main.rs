@@ -345,6 +345,7 @@ async fn create_erc20_transfer_records(
         }
 
         db_writer.write_transfers(&transfer_records).await?;
+        transfer_records.clear();
     }
     Ok(())
 }
