@@ -15,6 +15,7 @@ async fn sync_block_chain(
     db_writer: &mut TransactionWriter,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let network_id: i32 = 1;
+    let network = "eth";
 
     let bearer_token = env::var("HYPERSYNC_BEARER_TOKEN").unwrap();
 
@@ -251,7 +252,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init().unwrap();
 
     let mut db_writer = TransactionWriter::new().await;
-    let network = "eth";
 
     db_writer.init().await?;
     let block_number = db_writer.get_latest_block_number().await?;
