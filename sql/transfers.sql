@@ -1,7 +1,6 @@
 CREATE TABLE
     transfers (
         id BIGSERIAL PRIMARY KEY,
-        log_id BIGSERIAL NOT NULL,
         transfer_type BIGINT NOT NULL, -- 1 - ERC20
         network_id BIGINT NOT NULL,
         block_number NUMERIC(78, 0) NOT NULL,
@@ -10,7 +9,11 @@ CREATE TABLE
         contract_address VARCHAR(42) NOT NULL,
         from_address VARCHAR(42) NOT NULL,
         to_address VARCHAR(42) NOT NULL,
-        amount NUMERIC(78, 0) NOT NULL
+        operator VARCHAR(42),
+        token_id NUMERIC(78, 0),
+        amount NUMERIC(78, 0),
+        token_ids JSONB,
+        amounts JSONB
     );
 
 CREATE INDEX idx_transfers_network_id ON transfers (network_id);

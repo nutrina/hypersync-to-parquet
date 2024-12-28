@@ -19,18 +19,68 @@ pub struct TransactionWriter {
     pool: Pool,
 }
 
+#[repr(i32)] // Specify the underlying type (e.g., i32, u32, etc.)
+#[derive(Debug, Clone)]
+pub enum TransferType {
+    Erc20OrErc721 = 1, // ERC20 or ERC721 share the same event signature, so we cannot initially distinguish between them ...
+    Erc20 = 2,
+    Erc721 = 3,
+    Erc1155Single = 4,
+    Erc1155Batch = 5,
+}
+
+// Implement the Default trait for TransferType
+impl Default for TransferType {
+    fn default() -> Self {
+        TransferType::Erc20OrErc721
+    }
+}
+
+// Implement the to_int function for TransferType
+impl TransferType {
+    pub fn to_int(&self) -> i32 {
+        self.clone() as i32
+    }
+}
+
+#[derive(Debug)]
 pub struct TransferRecord {
     pub id: String,
-    pub log_id: String,
-    pub transfer_type: String,
+    pub transfer_type: TransferType,
     pub network_id: String,
     pub block_number: String,
     pub tx_hash: String,
     pub tx_index: String,
+    pub operator: String,
     pub contract_address: String,
     pub from_address: String,
     pub to_address: String,
+    pub token_id: String,
     pub amount: String,
+    pub token_ids: String,
+    pub amounts: String,
+}
+
+impl Default for TransferRecord {
+    // You can provide a helper function to customize defaults
+    fn default() -> Self {
+        Self {
+            id: String::from("NULL"),
+            transfer_type: TransferType::Erc20OrErc721,
+            network_id: String::from("NULL"),
+            block_number: String::from("NULL"),
+            tx_hash: String::from("NULL"),
+            tx_index: String::from("NULL"),
+            operator: String::from("NULL"),
+            contract_address: String::from("NULL"),
+            from_address: String::from("NULL"),
+            to_address: String::from("NULL"),
+            token_id: String::from("NULL"),
+            amount: String::from("NULL"),
+            token_ids: String::from("NULL"),
+            amounts: String::from("NULL"),
+        }
+    }
 }
 
 pub struct LogRecord {
@@ -165,34 +215,37 @@ async fn write_logs(
     Ok(())
 }
 
-async fn write_erc20_transfers(
+async fn write_transfers(
     client: &Client,
-    log_records: &[TransferRecord],
+    transfer_records: &[TransferRecord],
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Stream the data to the database
 
     println!(
-        "write_erc20_transfers, num log_records {}",
-        log_records.len()
+        "write_erc20_transfers, num transfer_records {}",
+        transfer_records.len()
     );
 
-    let copy_stmt = String::from("COPY transfers (log_id, transfer_type, network_id, block_number, tx_hash, tx_index, contract_address, from_address, to_address, amount) FROM STDIN ");
+    let copy_stmt = String::from("COPY transfers (transfer_type, network_id, block_number, tx_hash, tx_index, contract_address, from_address, to_address, operator, amount, token_id, token_ids, amounts) FROM STDIN NULL 'NULL'");
     let sink = client.copy_in(&copy_stmt).await?;
     let mut sink = Box::pin(sink); // Pin the sink
 
-    for log_record in log_records {
+    for transfer_record in transfer_records {
         let line = format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-            &log_record.log_id,
-            &log_record.transfer_type,
-            &log_record.network_id,
-            &log_record.block_number,
-            &log_record.tx_hash,
-            &log_record.tx_index,
-            &log_record.contract_address,
-            &log_record.from_address,
-            &log_record.to_address,
-            &log_record.amount,
+            "{:?}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            transfer_record.transfer_type.to_int(),
+            &transfer_record.network_id,
+            &transfer_record.block_number,
+            &transfer_record.tx_hash,
+            &transfer_record.tx_index,
+            &transfer_record.contract_address,
+            &transfer_record.from_address,
+            &transfer_record.to_address,
+            &transfer_record.operator,
+            &transfer_record.amount,
+            &transfer_record.token_id,
+            &transfer_record.token_ids,
+            &transfer_record.amounts,
         );
         let buf = Bytes::from(line);
         sink.send(buf).await?;
@@ -296,6 +349,7 @@ impl TransactionWriter {
         block_number: u64,
         transaction_records: &[TransactionRecord],
         log_records: &[LogRecord],
+        transfer_records: &[TransferRecord],
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Start a new transaction
         let _block_number = block_number as i64; // TODO: use BigDecimal here?
@@ -308,10 +362,11 @@ impl TransactionWriter {
             )
             .await?;
 
-        let id: i32 = row.get(0);
+        let id: i64 = row.get(0);
 
         write_transactions(&client, transaction_records).await?;
         write_logs(&client, log_records).await?;
+        write_transfers(&client, transfer_records).await?;
 
         client
             .execute("UPDATE blocks SET status = '1' WHERE id = $1 ", &[&id])
@@ -404,7 +459,7 @@ WHERE status IS NULL",
 
     pub async fn get_erc20_log_records(
         &mut self,
-        from_id: i32,
+        from_id: i64,
     ) -> Result<Option<Vec<LogRecord>>, Box<dyn std::error::Error>> {
         let mut result = Vec::new(); // Create an empty vector
         let client = self.pool.get().await.unwrap();
@@ -418,7 +473,7 @@ WHERE status IS NULL",
 
         for row in rows.iter() {
             let item = LogRecord {
-                id: row.try_get::<_, i32>(0).unwrap().to_string(),
+                id: row.try_get::<_, i64>(0).unwrap().to_string(),
                 network_id: row.try_get::<_, i64>(1).unwrap().to_string(),
                 block_number: row.try_get::<_, Decimal>(2).unwrap().to_string(),
                 tx_hash: row.try_get(3).unwrap(),
@@ -446,7 +501,7 @@ WHERE status IS NULL",
     ) -> Result<(), Box<dyn std::error::Error>> {
         let client = self.pool.get().await.unwrap();
 
-        write_erc20_transfers(&client, records).await?;
+        write_transfers(&client, records).await?;
 
         Ok(())
     }

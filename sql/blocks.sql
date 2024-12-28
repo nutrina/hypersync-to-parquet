@@ -1,6 +1,6 @@
 CREATE TABLE
     blocks (
-        id SERIAL PRIMARY KEY,
+        id BIGSERIAL PRIMARY KEY,
         block_number BIGINT NOT NULL,   -- TODO: use numeric here
         status INT NULL
     );

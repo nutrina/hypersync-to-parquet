@@ -23,4 +23,5 @@ tokio-postgres = { version = "0.7.10", features = ["with-chrono-0_4"] }
 rust_decimal = { version = "1", features = ["db-tokio-postgres"] }
 ethers = { version = "2.0", features = ["abigen"] }
 hex = "0.4"
+ruint = "1"
 

@@ -1,20 +1,31 @@
-use ethers::{abi::AbiEncode, types::U64};
-use hypersync_client::{
-    format::{Address, Hex},
-    Client, ClientConfig, Decoder, StreamConfig,
-};
-use rustls::crypto::CryptoProvider;
+use ethers::types::U64;
+use hypersync_client::{format::Hex, Client, ClientConfig, Decoder, StreamConfig};
 use std::env;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use url::Url;
 mod transaction_writer;
 mod transfers;
-use ethers::types::{Filter, Log, TxHash};
+use ethers::types::{Log, TxHash};
 use rustls::crypto::ring as provider;
 
 use hex;
-use transaction_writer::{LogRecord, TransactionRecord, TransactionWriter, TransferRecord}; // Import the `Person` struct
-use transfers::{decode_transfer_event, Transfer}; // Import the `Person` struct
+use transaction_writer::{
+    LogRecord, TransactionRecord, TransactionWriter, TransferRecord, TransferType,
+}; // Import the `Person` struct
+use transfers::{
+    decode_transfer_event, decode_transfer_event_batch_erc1155,
+    decode_transfer_event_single_erc1155,
+}; // Import the `Person` struct
+
+// ERC20 Transfer event signature will be the same as for ERC 721
+const ERC20_TRANSFER_TOPIC: &str =
+    "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+// ERC1155 TransferBatch (index_topic_1 address operator, index_topic_2 address from, index_topic_3 address to, uint256[] ids, uint256[] values)
+const ERC1155_TRANSFER_BATCH_TOPIC: &str =
+    "0x4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b8c0526c8f7fb";
+// ERC1155 TransferSingle (index_topic_1 address _operator, index_topic_2 address _from, index_topic_3 address _to, uint256 _id, uint256 _value)
+const ERC1155_TRANSFER_SINGLE_TOPIC: &str =
+    "0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62";
 
 /*
 from_block - inclusive
@@ -41,14 +52,20 @@ async fn sync_block_chain(
 
     let query = serde_json::from_value(serde_json::json!({
         "from_block": from_block,
-        "to_block": to_block,
-        "logs": [{
-            "topics": [
-                // ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"],
-            ]
-        }],
+        // "to_block": 2093455,
+        "logs": [
+            {
+                // "topics": [
+            //         [
+            //             // "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+            //             // "0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62",
+            //             // "0x4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b8c0526c8f7fb"
+            //         ],
+                // ]
+            }
+        ],
         "transactions": [
-            // get all transactions
+            {}
         ],
         "field_selection": {
             "log": [
@@ -92,7 +109,7 @@ async fn sync_block_chain(
                 "l1_fee_scalar",
                 // Amount of gas spent on L1 calldata in units of L2 gas.
                 "gas_used_for_l1",
-            ]
+            ],
         }
     }))
     .unwrap();
@@ -102,11 +119,14 @@ async fn sync_block_chain(
 
     let decoder = Decoder::from_signatures(&[
         "Transfer(address indexed from, address indexed to, uint amount)",
+        "TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)",
+        "TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)",
     ])
     .unwrap();
 
     // Vectors to store data for DataFrame
     let mut log_records: Vec<LogRecord> = Vec::new();
+    let mut transfer_records: Vec<TransferRecord> = Vec::new();
     let mut transaction_records: Vec<TransactionRecord> = Vec::new();
 
     while let Some(res) = receiver.recv().await {
@@ -117,12 +137,21 @@ async fn sync_block_chain(
 
         println!("Num logs: {}", res.data.logs.len());
         println!("Num transactions: {:?}", res.data.transactions.len());
+        println!("Num traces: {:?}", res.data.traces.len());
+
+        for batch in res.data.traces {
+            println!("Num traces: {:?}", batch.len());
+            for trace in batch {
+                println!("Trace: {:?}", trace.subtraces);
+            }
+        }
 
         // Process logs and associate them with transactions
         for batch in res.data.logs {
             for log in batch {
+                let decoded_logs = decoder.decode_log(&log);
                 if let (
-                    Ok(Some(decoded_log)),
+                    // Ok(Some(decoded_log)),
                     Some(tx_hash),
                     Some(block_number),
                     Some(tx_index),
@@ -132,7 +161,7 @@ async fn sync_block_chain(
                     topic2,
                     topic3,
                 ) = (
-                    decoder.decode_log(&log),
+                    // decoder.decode_log(&log),
                     log.transaction_hash,
                     log.block_number,
                     log.transaction_index,
@@ -150,7 +179,115 @@ async fn sync_block_chain(
                         .as_ref()
                         .map_or_else(String::new, |v| v.encode_hex()),
                 ) {
-                    log_records.push(LogRecord {
+                    match decoded_logs {
+                        Ok(Some(decoded_log)) => {
+                            // println!("Decoded log selector: {:?}", decoded_log.selector);
+                            // println!("Decoded log indexed: {:?}", decoded_log.indexed[0]);
+                            // println!("Decoded log body: {:?}", decoded_log.body);
+                            // println!("Decoded log body: {:?}", decoded_log.body[0]);
+                            match topic0.as_str() {
+                                ERC20_TRANSFER_TOPIC => {
+                                    let from =
+                                        decoded_log.indexed[0].as_address().unwrap().to_string();
+                                    let to =
+                                        decoded_log.indexed[1].as_address().unwrap().to_string();
+                                    let value: String =
+                                        decoded_log.body[0].as_uint().unwrap().0.to_string();
+
+                                    let transfer_record = TransferRecord {
+                                        network_id: network_id.to_string(),
+                                        block_number: block_number.to_string(),
+                                        transfer_type: TransferType::Erc20,
+                                        tx_hash: tx_hash.encode_hex(),
+                                        tx_index: tx_index.to_string(),
+                                        contract_address: contract_address.encode_hex(),
+                                        from_address: from,
+                                        to_address: to,
+                                        amount: value,
+                                        ..Default::default()
+                                    };
+                                    transfer_records.push(transfer_record);
+                                }
+                                ERC1155_TRANSFER_SINGLE_TOPIC => {
+                                    let operator =
+                                        decoded_log.indexed[0].as_address().unwrap().to_string();
+                                    let from =
+                                        decoded_log.indexed[1].as_address().unwrap().to_string();
+                                    let to =
+                                        decoded_log.indexed[2].as_address().unwrap().to_string();
+                                    let token_id: String =
+                                        decoded_log.body[0].as_uint().unwrap().0.to_string();
+                                    let value: String =
+                                        decoded_log.body[1].as_uint().unwrap().0.to_string();
+
+                                    let transfer_record = TransferRecord {
+                                        network_id: network_id.to_string(),
+                                        block_number: block_number.to_string(),
+                                        transfer_type: TransferType::Erc1155Single,
+                                        tx_hash: tx_hash.encode_hex(),
+                                        tx_index: tx_index.to_string(),
+                                        contract_address: contract_address.encode_hex(),
+                                        operator: operator,
+                                        from_address: from,
+                                        to_address: to,
+                                        token_id: token_id,
+                                        amount: value,
+                                        ..Default::default()
+                                    };
+                                    transfer_records.push(transfer_record);
+                                }
+                                ERC1155_TRANSFER_BATCH_TOPIC => {
+                                    let operator =
+                                        decoded_log.indexed[0].as_address().unwrap().to_string();
+                                    let from =
+                                        decoded_log.indexed[1].as_address().unwrap().to_string();
+                                    let to =
+                                        decoded_log.indexed[2].as_address().unwrap().to_string();
+
+                                    let ids: Vec<String> = decoded_log.body[0]
+                                        .as_array()
+                                        .unwrap()
+                                        .iter()
+                                        .map(|v| v.as_uint().unwrap().0.to_string())
+                                        .collect();
+                                    let values: Vec<String> = decoded_log.body[1]
+                                        .as_array()
+                                        .unwrap()
+                                        .iter()
+                                        .map(|v| v.as_uint().unwrap().0.to_string())
+                                        .collect();
+
+                                    let transfer_record = TransferRecord {
+                                        network_id: network_id.to_string(),
+                                        block_number: block_number.to_string(),
+                                        transfer_type: TransferType::Erc1155Batch,
+                                        tx_hash: tx_hash.encode_hex(),
+                                        tx_index: tx_index.to_string(),
+                                        contract_address: contract_address.encode_hex(),
+                                        operator: operator,
+                                        from_address: from,
+                                        to_address: to,
+                                        token_ids: serde_json::to_string(&ids)?,
+                                        amounts: serde_json::to_string(&values)?,
+                                        ..Default::default()
+                                    };
+                                    transfer_records.push(transfer_record);
+                                }
+                                _ => {
+                                    // println!("No decoded log");
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            // This can happen, for example in the 4th log here: https://etherscan.io/tx/0xd979ee2df4bc258f40bea8e53855a6bb4a0395c6dc48620e660237f793129f1e#eventlog
+                            // println!("Error decoding log: {:?} for tx_hash {:?}", e, tx_hash);
+                        }
+                        _ => {
+                            // println!("No decoded log");
+                        }
+                    }
+
+                    let log_record = LogRecord {
                         id: String::from(""),
                         network_id: network_id.to_string(),
                         block_number: block_number.to_string(),
@@ -162,7 +299,9 @@ async fn sync_block_chain(
                         topic1: topic1,
                         topic2: topic2,
                         topic3: topic3,
-                    });
+                    };
+
+                    log_records.push(log_record);
                 }
             }
         }
@@ -234,9 +373,11 @@ async fn sync_block_chain(
             }
         }
         println!(
-            "Processed block: {}, saving {} transaction_records",
+            "Processed block: {}, saving \n{} transaction_records\n{} log_records\n{} transfer_records",
             res.next_block,
-            log_records.len()
+            transaction_records.len(),
+            log_records.len(),
+            transfer_records.len()
         );
         println!(
             "Processed block: {}, saving {} logs",
@@ -245,9 +386,15 @@ async fn sync_block_chain(
         );
 
         db_writer
-            .write(res.next_block - 1, &transaction_records, &log_records)
+            .write(
+                res.next_block - 1,
+                &transaction_records,
+                &log_records,
+                &transfer_records,
+            )
             .await?;
         log_records.clear();
+        transfer_records.clear();
         transaction_records.clear();
         println!("===> DONE writing logs & transactions");
     }
@@ -258,9 +405,9 @@ async fn sync_block_chain(
 async fn sync_all_blockchain_blocks(
     db_writer: &mut TransactionWriter,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let from_block = db_writer.get_latest_block_number().await? + 1;
-
     let block_number = db_writer.get_latest_block_number().await?;
+    let from_block = block_number + 1;
+
     println!("Latest block number: {}", block_number);
 
     sync_block_chain(db_writer, from_block, 0).await?;
@@ -282,16 +429,136 @@ async fn sync_missing_block_ranges(
     Ok(())
 }
 
+fn get_transfer_record(
+    log_record: &LogRecord,
+) -> Result<TransferRecord, Box<dyn std::error::Error>> {
+    match log_record.topic0.as_str() {
+        ERC20_TRANSFER_TOPIC | ERC1155_TRANSFER_BATCH_TOPIC | ERC1155_TRANSFER_SINGLE_TOPIC => {
+            let data = if log_record.data.len() >= 2 {
+                log_record.data[2..].to_string()
+            } else {
+                String::new()
+            };
+
+            let mut topics: Vec<TxHash> = Vec::new();
+
+            if log_record.topic0.len() > 0 {
+                topics.push(log_record.topic0.parse()?);
+            }
+            if log_record.topic1.len() > 0 {
+                topics.push(log_record.topic1.parse()?);
+            }
+            if log_record.topic2.len() > 0 {
+                topics.push(log_record.topic2.parse()?);
+            }
+            if log_record.topic3.len() > 0 {
+                topics.push(log_record.topic3.parse()?);
+            }
+
+            let eth_event_log = Log {
+                address: log_record.contract_address.parse().unwrap(),
+                topics: topics,
+                data: hex::decode(data).unwrap().into(),
+                ..Default::default()
+            };
+
+            match log_record.topic0.as_str() {
+                ERC20_TRANSFER_TOPIC => {
+                    // Decode the log
+                    match decode_transfer_event(eth_event_log) {
+                        Ok(event) => {
+                            let transfer_record = TransferRecord {
+                                network_id: log_record.network_id.clone(),
+                                block_number: log_record.block_number.clone(),
+                                transfer_type: TransferType::Erc20,
+                                tx_hash: log_record.tx_hash.clone(),
+                                tx_index: log_record.tx_index.clone(),
+                                contract_address: log_record.contract_address.clone(),
+                                from_address: String::from("0x")
+                                    + hex::encode(event.from.as_bytes()).as_str(),
+                                to_address: String::from("0x")
+                                    + hex::encode(event.to.as_bytes()).as_str(),
+                                amount: event.value.to_string(),
+                                ..Default::default()
+                            };
+                            Ok(transfer_record)
+                        }
+                        Err(e) => {
+                            // eprintln!("ERC20_TRANSFER_TOPIC Failed to decode event: {}", e);
+                            Err(e)
+                        }
+                    }
+                }
+                ERC1155_TRANSFER_BATCH_TOPIC => {
+                    // Decode the log
+                    match decode_transfer_event_batch_erc1155(eth_event_log) {
+                        Ok(event) => {
+                            let transfer_record = TransferRecord {
+                                network_id: log_record.network_id.clone(),
+                                block_number: log_record.block_number.clone(),
+                                transfer_type: TransferType::Erc1155Batch,
+                                tx_hash: log_record.tx_hash.clone(),
+                                tx_index: log_record.tx_index.clone(),
+                                contract_address: log_record.contract_address.clone(),
+                                from_address: String::from("0x")
+                                    + hex::encode(event.from.as_bytes()).as_str(),
+                                to_address: String::from("0x")
+                                    + hex::encode(event.to.as_bytes()).as_str(),
+                                ..Default::default()
+                            };
+                            Ok(transfer_record)
+                        }
+                        Err(e) => {
+                            eprintln!("ERC1155_TRANSFER_BATCH_TOPIC Failed to decode event: {}", e);
+                            Err(e)
+                        }
+                    }
+                }
+                ERC1155_TRANSFER_SINGLE_TOPIC => {
+                    // Decode the log
+                    match decode_transfer_event_single_erc1155(eth_event_log) {
+                        Ok(event) => {
+                            let transfer_record = TransferRecord {
+                                network_id: log_record.network_id.clone(),
+                                block_number: log_record.block_number.clone(),
+                                transfer_type: TransferType::Erc1155Single,
+                                tx_hash: log_record.tx_hash.clone(),
+                                tx_index: log_record.tx_index.clone(),
+                                contract_address: log_record.contract_address.clone(),
+                                from_address: String::from("0x")
+                                    + hex::encode(event.from.as_bytes()).as_str(),
+                                to_address: String::from("0x")
+                                    + hex::encode(event.to.as_bytes()).as_str(),
+                                amount: event.value.to_string(),
+                                ..Default::default()
+                            };
+                            Ok(transfer_record)
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "ERC1155_TRANSFER_SINGLE_TOPIC Failed to decode event: {}",
+                                e
+                            );
+                            Err(e)
+                        }
+                    }
+                }
+                _ => Err("Unknown event - this should not occur ...".into()),
+            }
+        }
+        _ => Err("Unknown event".into()),
+    }
+}
+
 async fn create_erc20_transfer_records(
     db_writer: &mut TransactionWriter,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let _next_log_id: i64 = db_writer.get_latest_log_id_for_transfers().await.unwrap() + 1;
-    let mut next_log_id: i32 = _next_log_id as i32;
+    let mut next_log_id: i64 = db_writer.get_latest_log_id_for_transfers().await.unwrap() + 1;
     let mut transfer_records: Vec<TransferRecord> = Vec::new();
 
     println!("Next log id: {}", next_log_id);
     while let Some(erc20_logs) = db_writer.get_erc20_log_records(next_log_id).await.unwrap() {
-        next_log_id = erc20_logs.last().unwrap().id.parse::<i32>()? + 1;
+        next_log_id = erc20_logs.last().unwrap().id.parse::<i64>()? + 1;
         println!("Next log id: {}", next_log_id);
 
         for erc20_log in erc20_logs.iter() {
@@ -327,11 +594,9 @@ async fn create_erc20_transfer_records(
             match decode_transfer_event(eth_event_log) {
                 Ok(event) => {
                     transfer_records.push(TransferRecord {
-                        id: String::from(""),
-                        log_id: erc20_log.id.clone(),
                         network_id: erc20_log.network_id.clone(),
                         block_number: erc20_log.block_number.clone(),
-                        transfer_type: String::from("1"),
+                        transfer_type: TransferType::Erc20,
                         tx_hash: erc20_log.tx_hash.clone(),
                         tx_index: erc20_log.tx_index.clone(),
                         contract_address: erc20_log.contract_address.clone(),
@@ -339,6 +604,7 @@ async fn create_erc20_transfer_records(
                             + hex::encode(event.from.as_bytes()).as_str(),
                         to_address: String::from("0x") + hex::encode(event.to.as_bytes()).as_str(),
                         amount: event.value.to_string(),
+                        ..Default::default()
                     });
                 }
                 Err(e) => eprintln!("Failed to decode event: {}", e),
@@ -363,7 +629,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     db_writer.init().await?;
 
     // // ---- Sync everything ....
-    // sync_all_blockchain_blocks(&mut db_writer).await?;
+    sync_all_blockchain_blocks(&mut db_writer).await?;
     // // ---- End syncing everything
 
     // // ---- Sync only the missing blocks
@@ -371,7 +637,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // // ---- End Sync only the missing blocks
 
     // ---- Sync only the missing blocks
-    create_erc20_transfer_records(&mut db_writer).await?;
+    // create_erc20_transfer_records(&mut db_writer).await?;
     // ---- End Sync only the missing blocks
 
     // hash=0x2adf58cb7c7ee6177705a4f99fbe8c51f5b57d5fc4d434755a6afe79a5a43553
