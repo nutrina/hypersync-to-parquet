@@ -1,6 +1,6 @@
 CREATE TABLE
     logs (
-        id SERIAL PRIMARY KEY,
+        id BIGSERIAL PRIMARY KEY,
         network_id BIGINT,
         block_number NUMERIC(78, 0) NOT NULL,
         tx_hash VARCHAR(66) NOT NULL,

@@ -1,6 +1,6 @@
 CREATE TABLE
     transactions (
-        id SERIAL PRIMARY KEY,
+        id BIGSERIAL PRIMARY KEY,
         network_id BIGINT,
         status INT NOT NULL,
         from_address VARCHAR(42) NOT NULL,
